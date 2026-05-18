@@ -1,0 +1,7 @@
+# Windows clutter
+Thumbs.db
+Desktop.ini
+
+# Temporary files generated during processing failures
+*.tmp.mp3
+*.log
