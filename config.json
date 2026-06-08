@@ -1,7 +1,7 @@
 {
   "MediaDirectory": "C:\\Users\\<YOUR_WINDOWS_USERNAME>\\AppData\\Roaming\\Anki2\\<YOUR_ANKI_PROFILE_NAME>\\collection.media",
   "FileExtensions": ["*.mp3", "*.ogg", "*.webm", "*.wav"],
-  "AsbPlayerFilter": "asbp_*.mp3",
+  "AsbPlayerFilter": "*asbp*",
   "FFmpegSettings": {
     "AudioFilter": "loudnorm=I=-16:TP=-1.5:LRA=11",
     "AudioRate": "44100",

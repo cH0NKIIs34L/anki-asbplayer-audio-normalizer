@@ -6,13 +6,28 @@
     audio files in an Anki media directory.
 .PARAMETER TodayOnly
     If specified, only processes files created today that match the asbplayer filter.
+.PARAMETER All
+    If specified, processes all asbplayer audio files without prompting.
+.PARAMETER Preview
+    Lists matching files without processing them.
 #>
 
 [CmdletBinding()]
 param (
     [Parameter(Mandatory = $false)]
-    [switch]$TodayOnly
+    [switch]$TodayOnly,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$All,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$Preview
 )
+
+if ($TodayOnly -and $All) {
+    Write-Error "Use either -TodayOnly or -All, not both."
+    exit 1
+}
 
 # 1. Load Configurations
 $ConfigFile = Join-Path $PSScriptRoot "config.json"
@@ -24,26 +39,63 @@ if (-not (Test-Path $ConfigFile)) {
 $Config = Get-Content -Raw $ConfigFile | ConvertFrom-Json
 $MediaDir = $Config.MediaDirectory
 
+if ([string]::IsNullOrWhiteSpace($MediaDir) -or $MediaDir -match '<[^>]+>') {
+    Write-Error "MediaDirectory is still using a placeholder value. Open config.json and replace it with your real Anki collection.media path."
+    exit 1
+}
+
 # Verify Media Directory exists
 if (-not (Test-Path $MediaDir)) {
     Write-Error "Anki media directory not found at: $MediaDir. Please check config.json."
     exit 1
 }
 
+$AsbPlayerFilter = $Config.AsbPlayerFilter
+if ([string]::IsNullOrWhiteSpace($AsbPlayerFilter)) {
+    Write-Error "AsbPlayerFilter is missing from config.json."
+    exit 1
+}
+
+$FFmpegCommand = Get-Command ffmpeg -ErrorAction SilentlyContinue
+if (-not $FFmpegCommand) {
+    Write-Error "FFmpeg was not found on PATH. Install FFmpeg and make sure the folder containing ffmpeg.exe is added to PATH, then open a new PowerShell window and try again."
+    exit 1
+}
+
 # 2. Define File Targeting Strategy
 $FilesToProcess = @()
 
-if ($TodayOnly) {
+$ProcessTodayOnly = $TodayOnly
+if (-not $TodayOnly -and -not $All) {
+    Write-Host "Choose what to process:" -ForegroundColor Cyan
+    Write-Host "  [A] All configured audio files"
+    Write-Host "  [T] Today's asbplayer audio files only"
+    $Choice = Read-Host "Enter A or T"
+
+    if ($Choice -match '^[Tt]') {
+        $ProcessTodayOnly = $true
+    } elseif ($Choice -match '^[Aa]$' -or [string]::IsNullOrWhiteSpace($Choice)) {
+        $ProcessTodayOnly = $false
+    } else {
+        Write-Error "Invalid selection. Enter A for all files or T for today only."
+        exit 1
+    }
+}
+
+if ($ProcessTodayOnly) {
     # Match the behavior of your original "today" script
     Write-Host "Mode: Processing TODAY'S asbplayer audio files only." -ForegroundColor Cyan
     $MidnightToday = (Get-Date).Date
-    $FilesToProcess = Get-ChildItem -Path $MediaDir -Filter $Config.AsbPlayerFilter |
-        Where-Object { $_.CreationTime -ge $MidnightToday }
+    foreach ($Ext in $Config.FileExtensions) {
+        $FilesToProcess += Get-ChildItem -Path $MediaDir -Filter $Ext |
+            Where-Object { $_.Name -like $AsbPlayerFilter -and $_.CreationTime -ge $MidnightToday }
+    }
 } else {
     # Match the behavior of your original "all" script
-    Write-Host "Mode: Processing ALL configured audio extensions." -ForegroundColor Cyan
+    Write-Host "Mode: Processing ALL asbplayer audio files." -ForegroundColor Cyan
     foreach ($Ext in $Config.FileExtensions) {
-        $FilesToProcess += Get-ChildItem -Path $MediaDir -Filter $Ext
+        $FilesToProcess += Get-ChildItem -Path $MediaDir -Filter $Ext |
+            Where-Object { $_.Name -like $AsbPlayerFilter }
     }
 }
 
@@ -55,6 +107,12 @@ if ($FilesToProcess.Count -eq 0) {
 
 Write-Host "Found $($FilesToProcess.Count) file(s) to process.`n" -ForegroundColor Green
 
+if ($Preview) {
+    $FilesToProcess | Select-Object -ExpandProperty Name
+    Write-Host "`nPreview only. No files were processed." -ForegroundColor Yellow
+    exit 0
+}
+
 # 3. Process Audio Files
 foreach ($File in $FilesToProcess) {
     $InputPath = $File.FullName
@@ -63,7 +121,7 @@ foreach ($File in $FilesToProcess) {
     Write-Host "Normalizing: $($File.Name)" -ForegroundColor White
 
     # Run FFmpeg with settings pulled from config.json
-    & ffmpeg -i $InputPath `
+    & $FFmpegCommand.Source -i $InputPath `
              -af $Config.FFmpegSettings.AudioFilter `
              -ar $Config.FFmpegSettings.AudioRate `
              -b:a $Config.FFmpegSettings.Bitrate `
